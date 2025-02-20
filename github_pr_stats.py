@@ -40,6 +40,12 @@ def parse_arguments() -> argparse.Namespace:
         default=os.getenv('DEFAULT_ORG'),
         help="Name of the GitHub organization (can be set in .env file)"
     )
+    parser.add_argument(
+        "-d", "--days",
+        type=int,
+        default=90,
+        help="Number of days to analyze (default: 90)"
+    )
     return parser.parse_args()
 
 
@@ -158,8 +164,12 @@ def main():
             print("Failed to authenticate with GitHub")
             return
             
-        # Ensure UTC timezone for comparison
-        since_date = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=40)
+        # Calculate date based on provided days
+        since_date = datetime.now(timezone.utc).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        ) - timedelta(days=args.days)
+        
+        print(f"\nAnalyzing PRs for the last {args.days} days...")
         
         # Get all repositories
         repos = get_repos(g, args.org_name)

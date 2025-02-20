@@ -43,15 +43,17 @@ A tool to analyze pull requests across all repositories in a GitHub organization
 
 With the virtual environment activated, run:
 ```bash
-# Using organization from command line
+# Using organization from command line (last 90 days)
 python github_pr_stats.py <organization-name>
 
-# Or using DEFAULT_ORG from .env file
-python github_pr_stats.py
+# Specify custom number of days to analyze
+python github_pr_stats.py <organization-name> --days 30
+
+# Using DEFAULT_ORG from .env file with custom days
+python github_pr_stats.py --days 60
 ```
 
 To deactivate the virtual environment when done:
 ```bash
 deactivate
 ```
-````
