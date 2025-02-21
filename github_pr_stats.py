@@ -21,9 +21,18 @@ class PRStats:
         self.open = 0
         self.merged = 0
         self.closed = 0
+        self.total_lines = 0
+        self.total_prs = 0
 
     def __str__(self) -> str:
         return f"Open: {self.open}, Merged: {self.merged}, Closed: {self.closed}"
+
+    @property
+    def avg_lines_per_pr(self) -> float:
+        """Calculate average lines changed per PR."""
+        if self.total_prs == 0:
+            return 0.0
+        return round(self.total_lines / self.total_prs, 1)
 
 
 def parse_arguments() -> argparse.Namespace:
@@ -93,13 +102,18 @@ def analyze_prs(repos: List[Repository], since_date: datetime) -> Dict[str, PRSt
                 username = pr.user.login
                 if username not in user_stats:
                     user_stats[username] = PRStats()
-                    
+                
+                # Update PR counts
                 if pr.state == 'open':
                     user_stats[username].open += 1
                 elif pr.merged:
                     user_stats[username].merged += 1
                 else:
                     user_stats[username].closed += 1
+                
+                # Update lines changed statistics
+                user_stats[username].total_lines += pr.additions + pr.deletions
+                user_stats[username].total_prs += 1
                     
         except GithubException as e:
             print(f"Error accessing PRs in {repo.name}: {e}")
@@ -120,9 +134,9 @@ def display_stats(stats: Dict[str, PRStats]) -> None:
         return
         
     print("\nPull Request Statistics per User (sorted by merged PRs):")
-    print("-" * 60)
-    print(f"{'Username':<20} {'Open':<10} {'Merged':<10} {'Closed':<10}")
-    print("-" * 60)
+    print("-" * 95)
+    print(f"{'Username':<20} {'Open':<8} {'Merged':<8} {'Closed':<8} {'Total Lines':<12} {'Avg Lines/PR':<12}")
+    print("-" * 95)
     
     # Sort by number of merged PRs in descending order
     sorted_stats = sorted(
@@ -131,8 +145,20 @@ def display_stats(stats: Dict[str, PRStats]) -> None:
         reverse=True  # Descending order
     )
     
+    total_lines = 0
+    total_prs = 0
+    
     for username, pr_stats in sorted_stats:
-        print(f"{username:<20} {pr_stats.open:<10} {pr_stats.merged:<10} {pr_stats.closed:<10}")
+        total_lines += pr_stats.total_lines
+        total_prs += pr_stats.total_prs
+        print(
+            f"{username:<20} {pr_stats.open:<8} {pr_stats.merged:<8} {pr_stats.closed:<8} "
+            f"{pr_stats.total_lines:<12} {pr_stats.avg_lines_per_pr:<12}"
+        )
+    
+    print("-" * 95)
+    avg_lines = round(total_lines / total_prs, 1) if total_prs > 0 else 0
+    print(f"{'TOTAL':<20} {'':<8} {'':<8} {'':<8} {total_lines:<12} {avg_lines:<12}")
 
 
 def get_github_instance() -> Optional[Github]:
