@@ -14,6 +14,7 @@ from github import Github, GithubException
 from github.PullRequest import PullRequest
 from github.Repository import Repository
 from dotenv import load_dotenv
+from tqdm import tqdm
 
 
 class PRStats:
@@ -78,47 +79,54 @@ def get_repos(g: Github, org_name: str) -> List[Repository]:
 
 
 def analyze_prs(repos: List[Repository], since_date: datetime) -> Dict[str, PRStats]:
-    """
-    Analyze PRs from all repositories and generate statistics.
-    
-    Args:
-        repos: List of repositories to analyze
-        since_date: Starting date for PR analysis
-        
-    Returns:
-        Dictionary mapping usernames to their PR statistics
-    """
+    """Analyze PRs from all repositories and generate statistics."""
     user_stats: Dict[str, PRStats] = {}
+    total_prs_count = 0
     
-    for repo in repos:
+    # First pass to count total PRs for progress bar
+    print("\nCounting PRs...")
+    for repo in tqdm(repos, desc="Scanning repositories"):
         try:
             pulls = repo.get_pulls(state='all', sort='updated', direction='desc')
             for pr in pulls:
-                # Ensure both datetimes are UTC
                 pr_updated = datetime.strptime(pr.updated_at.strftime('%Y-%m-%d %H:%M:%S'), '%Y-%m-%d %H:%M:%S').replace(tzinfo=timezone.utc)
                 if pr_updated < since_date:
                     break
-                    
-                username = pr.user.login
-                if username not in user_stats:
-                    user_stats[username] = PRStats()
-                
-                # Update PR counts
-                if pr.state == 'open':
-                    user_stats[username].open += 1
-                elif pr.merged:
-                    user_stats[username].merged += 1
-                else:
-                    user_stats[username].closed += 1
-                
-                # Update lines changed statistics
-                user_stats[username].total_lines += pr.additions + pr.deletions
-                user_stats[username].total_prs += 1
-                    
+                total_prs_count += 1
         except GithubException as e:
-            print(f"Error accessing PRs in {repo.name}: {e}")
+            print(f"\nError accessing PRs in {repo.name}: {e}")
             continue
-            
+    
+    # Second pass to analyze PRs with progress bar
+    print("\nAnalyzing PRs...")
+    with tqdm(total=total_prs_count, desc="Processing PRs") as pbar:
+        for repo in repos:
+            try:
+                pulls = repo.get_pulls(state='all', sort='updated', direction='desc')
+                for pr in pulls:
+                    pr_updated = datetime.strptime(pr.updated_at.strftime('%Y-%m-%d %H:%M:%S'), '%Y-%m-%d %H:%M:%S').replace(tzinfo=timezone.utc)
+                    if pr_updated < since_date:
+                        break
+                        
+                    username = pr.user.login
+                    if username not in user_stats:
+                        user_stats[username] = PRStats()
+                    
+                    if pr.state == 'open':
+                        user_stats[username].open += 1
+                    elif pr.merged:
+                        user_stats[username].merged += 1
+                    else:
+                        user_stats[username].closed += 1
+                    
+                    user_stats[username].total_lines += pr.additions + pr.deletions
+                    user_stats[username].total_prs += 1
+                    pbar.update(1)
+                        
+            except GithubException as e:
+                print(f"\nError accessing PRs in {repo.name}: {e}")
+                continue
+                
     return user_stats
 
 
@@ -198,11 +206,14 @@ def main():
         print(f"\nAnalyzing PRs for the last {args.days} days...")
         
         # Get all repositories
+        print("\nFetching repositories...")
         repos = get_repos(g, args.org_name)
         if not repos:
             print("No repositories found or error accessing organization.")
             return
             
+        print(f"Found {len(repos)} repositories")
+        
         # Analyze PRs
         stats = analyze_prs(repos, since_date)
         
