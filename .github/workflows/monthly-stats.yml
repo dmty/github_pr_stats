@@ -1,0 +1,62 @@
+name: Monthly GitHub PR Stats
+
+on:
+  schedule:
+    # Run on the 1st of each month at 8:00 UTC
+    - cron: '0 8 1 * *'
+  workflow_dispatch:  # Allow manual triggering
+
+jobs:
+  generate-stats:
+    name: Generate and Post PR Statistics
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+          
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          
+      - name: Set date variables
+        id: date
+        run: |
+          # Calculate first and last day of previous month
+          LAST_MONTH=$(date -d "last month" +%Y-%m)
+          FIRST_DAY="${LAST_MONTH}-01"
+          # Get the last day of the month (using date tricks)
+          LAST_DAY=$(date -d "$(date -d "$FIRST_DAY +1 month" +%Y-%m-01) -1 day" +%Y-%m-%d)
+          
+          echo "first_day=$FIRST_DAY" >> $GITHUB_OUTPUT
+          echo "last_day=$LAST_DAY" >> $GITHUB_OUTPUT
+          echo "period=$LAST_MONTH" >> $GITHUB_OUTPUT
+          
+          echo "Generating stats for period: $FIRST_DAY to $LAST_DAY"
+          
+      - name: Run PR Stats for last month
+        env:
+          GITHUB_TOKEN: ${{ secrets.PR_STATS_TOKEN }}
+          DEFAULT_ORG: ${{ secrets.ORG_NAME }}
+        run: |
+          # Run the script and capture output
+          python github_pr_stats.py --start-date ${{ steps.date.outputs.first_day }} --end-date ${{ steps.date.outputs.last_day }} > stats_output.txt
+          
+      - name: Format Slack message
+        env:
+          PERIOD: ${{ steps.date.outputs.period }}
+        run: |
+          python utils/format_slack_message.py
+          
+      - name: Post to Slack
+        uses: slackapi/slack-github-action@v1.24.0
+        with:
+          channel-id: ${{ secrets.SLACK_CHANNEL_ID }}
+          payload-file-path: './slack_payload.json'
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}

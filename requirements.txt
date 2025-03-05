@@ -2,3 +2,4 @@ PyGithub>=1.58.2
 cryptography>=41.0.0
 python-dotenv>=1.0.0
 tqdm>=4.65.0
+requests>=2.31.0  # For Slack API interactions
