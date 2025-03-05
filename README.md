@@ -49,7 +49,13 @@ python github_pr_stats.py <organization-name>
 # Specify custom number of days to analyze
 python github_pr_stats.py <organization-name> --days 30
 
-# Using DEFAULT_ORG from .env file with custom days
+# Specify exact date range
+python github_pr_stats.py <organization-name> --start-date 2025-01-01 --end-date 2025-06-30
+
+# Use a start date with today as end date
+python github_pr_stats.py <organization-name> --start-date 2025-10-01
+
+# Using DEFAULT_ORG from .env file
 python github_pr_stats.py --days 60
 ```
 

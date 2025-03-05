@@ -50,12 +50,32 @@ def parse_arguments() -> argparse.Namespace:
         default=os.getenv('DEFAULT_ORG'),
         help="Name of the GitHub organization (can be set in .env file)"
     )
-    parser.add_argument(
+    
+    # Create date filtering group
+    date_group = parser.add_mutually_exclusive_group()
+    
+    # Option 1: Use days (default)
+    date_group.add_argument(
         "-d", "--days",
         type=int,
         default=90,
         help="Number of days to analyze (default: 90)"
     )
+    
+    # Option 2: Use specific date range (--start-date and --end-date are not mutually exclusive)
+    date_group.add_argument(
+        "--start-date",
+        type=lambda d: datetime.strptime(d, '%Y-%m-%d').replace(tzinfo=timezone.utc),
+        help="Start date for PR analysis (format: YYYY-MM-DD)"
+    )
+    
+    # End date is not in the mutually exclusive group
+    parser.add_argument(
+        "--end-date",
+        type=lambda d: datetime.strptime(d, '%Y-%m-%d').replace(tzinfo=timezone.utc),
+        help="End date for PR analysis (format: YYYY-MM-DD, defaults to today)"
+    )
+    
     return parser.parse_args()
 
 
@@ -78,8 +98,18 @@ def get_repos(g: Github, org_name: str) -> List[Repository]:
         return []
 
 
-def analyze_prs(repos: List[Repository], since_date: datetime) -> Dict[str, PRStats]:
-    """Analyze PRs from all repositories and generate statistics."""
+def analyze_prs(repos: List[Repository], start_date: datetime, end_date: datetime = None) -> Dict[str, PRStats]:
+    """
+    Analyze PRs from all repositories and generate statistics.
+    
+    Args:
+        repos: List of repositories to analyze
+        start_date: Starting date for PR analysis
+        end_date: Ending date for PR analysis (optional)
+        
+    Returns:
+        Dictionary mapping usernames to their PR statistics
+    """
     user_stats: Dict[str, PRStats] = {}
     total_prs_count = 0
     
@@ -90,8 +120,13 @@ def analyze_prs(repos: List[Repository], since_date: datetime) -> Dict[str, PRSt
             pulls = repo.get_pulls(state='all', sort='updated', direction='desc')
             for pr in pulls:
                 pr_updated = datetime.strptime(pr.updated_at.strftime('%Y-%m-%d %H:%M:%S'), '%Y-%m-%d %H:%M:%S').replace(tzinfo=timezone.utc)
-                if pr_updated < since_date:
+                
+                # Skip if PR is outside date range
+                if pr_updated < start_date:
                     break
+                if end_date and pr_updated > end_date:
+                    continue
+                    
                 total_prs_count += 1
         except GithubException as e:
             print(f"\nError accessing PRs in {repo.name}: {e}")
@@ -105,9 +140,13 @@ def analyze_prs(repos: List[Repository], since_date: datetime) -> Dict[str, PRSt
                 pulls = repo.get_pulls(state='all', sort='updated', direction='desc')
                 for pr in pulls:
                     pr_updated = datetime.strptime(pr.updated_at.strftime('%Y-%m-%d %H:%M:%S'), '%Y-%m-%d %H:%M:%S').replace(tzinfo=timezone.utc)
-                    if pr_updated < since_date:
+                    
+                    # Skip if PR is outside date range
+                    if pr_updated < start_date:
                         break
-                        
+                    if end_date and pr_updated > end_date:
+                        continue
+                    
                     username = pr.user.login
                     if username not in user_stats:
                         user_stats[username] = PRStats()
@@ -197,15 +236,35 @@ def main():
         if not g:
             print("Failed to authenticate with GitHub")
             return
+        
+        # Determine date range for analysis
+        end_date = None
+        if args.start_date:
+            # Use specific date range
+            start_date = args.start_date
             
-        # Calculate date based on provided days
-        since_date = datetime.now(timezone.utc).replace(
-            hour=0, minute=0, second=0, microsecond=0
-        ) - timedelta(days=args.days)
+            if args.end_date:
+                end_date = args.end_date
+            else:
+                # Default end date is today
+                end_date = datetime.now(timezone.utc).replace(
+                    hour=23, minute=59, second=59, microsecond=999999
+                )
+            
+            print(f"\nAnalyzing PRs from {start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}")
+        else:
+            # Use days (default approach)
+            start_date = datetime.now(timezone.utc).replace(
+                hour=0, minute=0, second=0, microsecond=0
+            ) - timedelta(days=args.days)
+            
+            print(f"\nAnalyzing PRs for the last {args.days} days...")
+            
+            # Ensure end_date is set for consistency
+            end_date = datetime.now(timezone.utc).replace(
+                hour=23, minute=59, second=59, microsecond=999999
+            )
         
-        print(f"\nAnalyzing PRs for the last {args.days} days...")
-        
-        # Get all repositories
         print("\nFetching repositories...")
         repos = get_repos(g, args.org_name)
         if not repos:
@@ -214,8 +273,8 @@ def main():
             
         print(f"Found {len(repos)} repositories")
         
-        # Analyze PRs
-        stats = analyze_prs(repos, since_date)
+        # Analyze PRs with date range
+        stats = analyze_prs(repos, start_date, end_date)
         
         # Display results
         display_stats(stats)
