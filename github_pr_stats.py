@@ -8,6 +8,7 @@ for the last 3 months and generates statistics per user.
 
 import os
 import argparse
+import sys
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional
 from github import Github, GithubException
@@ -76,6 +77,13 @@ def parse_arguments() -> argparse.Namespace:
         help="End date for PR analysis (format: YYYY-MM-DD, defaults to today)"
     )
 
+    # Add quiet mode option
+    parser.add_argument(
+        "-q", "--quiet",
+        action="store_true",
+        help="Quiet mode - only output final table without progress bars"
+    )
+
     return parser.parse_args()
 
 
@@ -97,7 +105,7 @@ def get_repos(g: Github, org_name: str) -> List[Repository]:
         print(f"Error accessing organization {org_name}: {e}")
         return []
 
-def analyze_prs(repos: List[Repository], start_date: datetime, end_date: datetime = None) -> Dict[str, PRStats]:
+def analyze_prs(repos: List[Repository], start_date: datetime, end_date: datetime = None, quiet: bool = False) -> Dict[str, PRStats]:
     """
     Analyze PRs from all repositories and generate statistics.
 
@@ -105,6 +113,7 @@ def analyze_prs(repos: List[Repository], start_date: datetime, end_date: datetim
         repos: List of repositories to analyze
         start_date: Starting date for PR analysis
         end_date: Ending date for PR analysis (optional)
+        quiet: Suppress progress output
 
     Returns:
         Dictionary mapping usernames to their PR statistics
@@ -112,9 +121,15 @@ def analyze_prs(repos: List[Repository], start_date: datetime, end_date: datetim
     user_stats: Dict[str, PRStats] = {}
     total_prs_count = 0
 
-    # First pass to count total PRs for progress bar
-    print("\nCounting PRs...")
-    for repo in tqdm(repos, desc="Scanning repositories"):
+    if not quiet:
+        print("\nCounting PRs...")
+
+    # First pass to count total PRs for progress bar (only if not quiet)
+    repo_iter = repos
+    if not quiet:
+        repo_iter = tqdm(repos, desc="Scanning repositories")
+
+    for repo in repo_iter:
         try:
             pulls = repo.get_pulls(state='all', sort='updated', direction='desc')
             for pr in pulls:
@@ -128,56 +143,76 @@ def analyze_prs(repos: List[Repository], start_date: datetime, end_date: datetim
 
                 total_prs_count += 1
         except GithubException as e:
-            print(f"\nError accessing PRs in {repo.name}: {e}")
+            if not quiet:
+                print(f"\nError accessing PRs in {repo.name}: {e}")
             continue
 
-    # Second pass to analyze PRs with progress bar
-    print("\nAnalyzing PRs...")
-    with tqdm(total=total_prs_count, desc="Processing PRs") as pbar:
-        for repo in repos:
-            try:
-                pulls = repo.get_pulls(state='all', sort='updated', direction='desc')
-                for pr in pulls:
-                    pr_updated = datetime.strptime(pr.updated_at.strftime('%Y-%m-%d %H:%M:%S'), '%Y-%m-%d %H:%M:%S').replace(tzinfo=timezone.utc)
+    # Second pass to analyze PRs
+    if not quiet:
+        print("\nAnalyzing PRs...")
 
-                    # Skip if PR is outside date range
-                    if pr_updated < start_date:
-                        break
-                    if end_date and pr_updated > end_date:
-                        continue
+    if not quiet:
+        pbar = tqdm(total=total_prs_count, desc="Processing PRs")
 
-                    username = pr.user.login
-                    if username not in user_stats:
-                        user_stats[username] = PRStats()
+    for repo in repos:
+        try:
+            pulls = repo.get_pulls(state='all', sort='updated', direction='desc')
+            for pr in pulls:
+                pr_updated = datetime.strptime(pr.updated_at.strftime('%Y-%m-%d %H:%M:%S'), '%Y-%m-%d %H:%M:%S').replace(tzinfo=timezone.utc)
 
-                    if pr.state == 'open':
-                        user_stats[username].open += 1
-                    elif pr.merged:
-                        user_stats[username].merged += 1
-                    else:
-                        user_stats[username].closed += 1
+                # Skip if PR is outside date range
+                if pr_updated < start_date:
+                    break
+                if end_date and pr_updated > end_date:
+                    continue
 
-                    user_stats[username].total_lines += pr.additions + pr.deletions
-                    user_stats[username].total_prs += 1
+                username = pr.user.login
+                if username not in user_stats:
+                    user_stats[username] = PRStats()
+
+                if pr.state == 'open':
+                    user_stats[username].open += 1
+                elif pr.merged:
+                    user_stats[username].merged += 1
+                else:
+                    user_stats[username].closed += 1
+
+                user_stats[username].total_lines += pr.additions + pr.deletions
+                user_stats[username].total_prs += 1
+
+                if not quiet and 'pbar' in locals():
                     pbar.update(1)
 
-            except GithubException as e:
+        except GithubException as e:
+            if not quiet:
                 print(f"\nError accessing PRs in {repo.name}: {e}")
-                continue
+            continue
+
+    if not quiet and 'pbar' in locals():
+        pbar.close()
 
     return user_stats
 
 
-def display_stats(stats: Dict[str, PRStats]) -> None:
+def display_stats(stats: Dict[str, PRStats], start_date: datetime, end_date: datetime, repo_count: int, quiet: bool = False) -> None:
     """
-    Display PR statistics in a formatted table, sorted by number of merged PRs.
+    Display PR statistics in a formatted table.
 
     Args:
         stats: Dictionary mapping usernames to their PR statistics
+        start_date: Starting date for PR analysis
+        end_date: Ending date for PR analysis
+        repo_count: Number of repositories analyzed
+        quiet: Suppress progress output
     """
     if not stats:
         print("No PR statistics found.")
         return
+
+    # Display date range and repo count when in quiet mode
+    if quiet:
+        print(f"PR Statistics from {start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}")
+        print(f"Analyzed {repo_count} repositories")
 
     print("\nPull Request Statistics per User (sorted by merged PRs):")
     print("-" * 80)
@@ -250,33 +285,37 @@ def main():
                     hour=23, minute=59, second=59, microsecond=999999
                 )
 
-            print(f"\nAnalyzing PRs from {start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}")
+            if not args.quiet:
+                print(f"\nAnalyzing PRs from {start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}")
         else:
             # Use days (default approach)
             start_date = datetime.now(timezone.utc).replace(
                 hour=0, minute=0, second=0, microsecond=0
             ) - timedelta(days=args.days)
 
-            print(f"\nAnalyzing PRs for the last {args.days} days...")
+            if not args.quiet:
+                print(f"\nAnalyzing PRs for the last {args.days} days...")
 
             # Ensure end_date is set for consistency
             end_date = datetime.now(timezone.utc).replace(
                 hour=23, minute=59, second=59, microsecond=999999
             )
 
-        print("\nFetching repositories...")
+        if not args.quiet:
+            print("\nFetching repositories...")
         repos = get_repos(g, args.org_name)
         if not repos:
             print("No repositories found or error accessing organization.")
             return
 
-        print(f"Found {len(repos)} repositories")
+        if not args.quiet:
+            print(f"Found {len(repos)} repositories")
 
         # Analyze PRs with date range
-        stats = analyze_prs(repos, start_date, end_date)
+        stats = analyze_prs(repos, start_date, end_date, args.quiet)
 
         # Display results
-        display_stats(stats)
+        display_stats(stats, start_date, end_date, len(repos), args.quiet)
 
     except GithubException as e:
         print(f"GitHub API error: {e}")

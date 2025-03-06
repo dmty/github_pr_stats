@@ -45,7 +45,7 @@ jobs:
           DEFAULT_ORG: ${{ secrets.ORG_NAME }}
         run: |
           # Run the script and capture output
-          python github_pr_stats.py --start-date ${{ steps.date.outputs.first_day }} --end-date ${{ steps.date.outputs.last_day }} > stats_output.txt
+          python github_pr_stats.py --start-date ${{ steps.date.outputs.first_day }} --end-date ${{ steps.date.outputs.last_day }} --quiet > stats_output.txt
           
       - name: Format Slack message
         env:
